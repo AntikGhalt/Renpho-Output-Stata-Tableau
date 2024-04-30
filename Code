@@ -1,0 +1,893 @@
+clear
+cd "C:\folder"
+import delimited Renpho-Paolo, encoding(UTF-8) numericcols(2 3 4 5 6 7 8 9 10 11 12 13 14) clear
+/*
+split TimeofMeasurement, gen(time)
+sort TimeofMeasurement
+tostring TimeofMeasurement, gen(time)
+gen double TimeofMeasurement = clock(strdate, "DMY hms")
+gsort TimeofMeasurement
+format %tc TimeofMeasurement
+format %tC TimeofMeasurement
+*/
+rename timeofmeasurement date
+rename weightkg kg
+rename bodyfat fat1
+rename musclemasskg musclekg
+
+generate date2 = clock(date, "MDYhms")
+drop date remarks
+rename date2 date
+order date, before(kg)
+format %tc date
+*format %tcdd/NN/YY_HH:MM date
+
+sort date
+*DROP first manual observation
+  drop in 1
+
+*GENERATE NEWDATE
+gen Date=dofc(date)
+order Date, before (kg)
+format Date %tddd/nn/YY
+
+***Fat percentage stuff
+*****BEFORE APPENDING NEW DATASET*****
+*Create weight and water not in percentage
+  gen fatkg= fat1*kg/100
+  label var fatkg "Body Fat (kg)"
+  gen waterkg= bodywater*kg/100
+  label var waterkg "Body Water (kg)"
+*musclekg in %
+  gen muscle1= musclekg*100/kg
+*kg e fat at 100:
+  gen kgprog= kg[_n==1]
+    egen kgprog2= max(kgprog)
+  gen kg100= kg*100/kgprog2
+
+  gen fatkgprog= fatkg[_n==1]
+    egen fatkgprog2= max(fatkgprog)
+  gen fatkg100= fatkg*100/fatkgprog2
+
+  *musclekg a 100
+    gen musclekgprog= musclekg[_n==1]
+      egen musclekgprog2= max(musclekgprog)
+    gen musclekg100= musclekg*100/musclekgprog2
+  *fat% a 100
+    gen fat1prog= fat1[_n==1]
+      egen fat1prog2= max(fat1prog)
+    gen fat1100= fat1*100/fat1prog2
+  *muscle% a 100 
+    gen muscle1prog= muscle1[_n==1]
+      egen muscle1prog2= max(muscle1prog)
+    gen muscle1100= muscle1*100/muscle1prog2
+*Set 0 at jenuary
+  gen musclekg0=musclekg-musclekgprog2
+  gen fatkg0=fatkg-fatkgprog2
+  gen kg0= kg-kgprog2
+  *fat and muscle in %
+    gen fat10= fat1-fat1prog2
+    gen muscle10=muscle1-muscle1prog2
+  *fatkg0-fatkg0
+    gen fat_muscle_0kg= fatkg0-musclekg0
+
+*/ 
+*APPEND DATASET
+  append using FIT_PESOMIN.dta
+sort Date
+*/
+
+  
+*1 obs per day
+  gen day= day(Date)
+  sort Date day
+  by Date day: gen daydummy= _n==1
+  gen daynumber = sum(daydummy)
+  sort daynumber kg
+  by daynumber: gen minday = _n==1
+  sort date
+*1 obs per week
+    gen week= week(Date)
+  gen year= year(Date)
+  order year, before(kg)
+  order week, before(kg)
+  sort year week
+  by year week: gen weekdummy= _n==1
+  gen weeknumber = sum(weekdummy)
+  order weeknumber, before (kg)
+  sort weeknumber kg
+  by weeknumber: gen minweek = _n==1
+  sort date
+  *WEEKdays, EDITING SATURDAY AND SUNDAY
+    gen dow= dow(Date)
+    replace weeknumber= weeknumber-1 if dow==0
+    replace week= week-1 if dow==0
+    
+  *daysofweeknames
+    label define week_days 0 "Sunday(7)" 1 "monday(1)" 2 "tuestday(2)" 3 "wednesday(3)" 4 "thursday(4)" 5 "friday(5)" 6 "saturday(6)"
+      label values dow week_days
+*1 obs per month
+  gen month=month(Date)
+    bysort year month: gen monthdummy= _n==1
+    gen monthnumber = sum(monthdummy)
+    sort monthnumber kg
+    by monthnumber: gen minmonth= _n==1
+*SETTING morning variables:
+  gen time=date
+  order time, before(kg)
+  format time %tcHH:MM
+  
+  gen hour=hh(date)
+  order hour, before(kg)
+  gen min=mm(date)
+  order min, before(kg)
+  gen timenum = hour+min/100
+  order timenum, before (kg)
+  
+  *info=  *gen admithour = hh(admittime) + mm(admittime)/60 + ss(admittime)/3600
+    *i pref=  gen admithour = hh(date) + mm(date)/100
+            *order admithour, before(kg)
+              
+  *minweek but 6-14 hour. 
+    *BUT SE NON CI SONO MISURAZIONI IN QUESTO ORARIO PER TUTTA LA SETTIMANA:
+      *> PRENDE COMUNQUE LA PRIMA PIù BASSA DISPONIBILE
+    gen kg2=kg if timenum > 6 & timenum < 14
+    order kg2, before (kg)
+    sort weeknumber kg2 kg
+    by weeknumber: gen minweek_morning= _n==1
+  *minweekmorning, SOLO SE LA MATTINA, ALTRIMENTI IGNORA LA SETTIMANA
+    by weeknumber: gen minweek_JUSTmorning= _n==1 if timenum >6 & timenum<14
+  *MINMORNING PER DAY
+    *gen daynumber = day(Date)
+    *order daynumber, before(time)
+    sort daynumber kg2 kg
+    by daynumber: gen minday_morning= _n==1
+  *MINMORNING PER DAY, IGNORANDO IL GIORNO SE NON C'è LA MATTINA
+    by daynumber: gen minday_JUSTmorning= _n==1 if timenum >6 & timenum<14
+  *MINMORNING MONTH, IGNORANDO IL GIORNO SE NON C'è LA MATTINA
+      sort monthnumber kg2 kg
+      by monthnumber: gen minmonth_morning= _n==1
+
+*media month based on minweek
+  gsort monthnumber -minweek_morning
+    by monthnumber: gen minmonth_mean= 1 if _n==1
+    drop minmonth_mean
+    *minweekmorning_monthmean
+  by monthnumber: egen kg_mean= mean(kg) if minweek_morning==1
+  by monthnumber: egen kg_mean2= max(kg_mean)
+  replace kg_mean= kg_mean2
+  drop kg_mean2 
+  replace kg_mean= . if minmonth != 1 
+  
+  *put the observation on the first day of evry month 
+    */
+      expand 2 if minmonth == 1 , gen(allert)
+                
+      local shortcut "kg_mean Date year month monthnumber day allert" 
+      ds `shortcut', not
+      foreach var of any `r(varlist)' {
+        replace `var'=. if allert==1
+        }
+        
+      replace day=1 if allert==1
+      replace week= week(Date) if week==.
+      replace week= week(Date) if week==.
+      replace Date= mdy(month,day,year)
+      replace kg_mean=. if allert==0
+      sort Date
+      
+      *si può fare anche salvando quest'altro datased in un preserve-restore than "append"
+      */
+  *media SEASON
+    gen season = quarter(Date) 
+      gsort year season -allert Date
+      by year season: egen kg_S= mean(kg_mean) 
+      by year season: replace kg_S=. if _n!=1
+  
+  *media su 8 settimane
+    *kg_8week
+      *gen week1= week(Date)
+        *replace week1= week1-1 if dow==0 // CHECK IF ITS RIGHT 
+        
+        sort year week
+        bysort year: gen weekyear= 52 if _n==1
+        replace weekyear= sum(weekyear)-52
+        gen week1= week+weekyear 
+        drop weekyear
+    *macro 2 try again 
+      sort Date
+      gen week8=0
+      local sett=0
+      local max=week1[_N]+100
+      while `sett'<`max' {
+        replace week8= week8+1 if week1<=`sett'
+        local sett=`sett'+8
+      }
+        replace week8= -(week8 - `max')
+          sort week8
+          by week8: replace week8= 1 if _n==1
+          replace week8=0 if week8!=1
+          sort Date
+          replace week8 = sum(week8)
+      *creating mean per 8weeks
+        gen kg_week8 = kg if minweek_morning
+        bysort week8: egen kg_8week= mean(kg_week8) 
+        bysort week8: replace kg_8week =. if _n != 1
+        drop kg_week8 
+
+***MAX STUFF***
+  *max week
+    gsort weeknumber -kg
+    by weeknumber: gen maxweek= _n==1
+  
+  *MAX DAY
+    gsort daynumber -kg
+    by daynumber: gen maxday= _n==1
+  
+  *MAX MONTH, ignoring the day if there is no morning measuration
+      gsort monthnumber -kg
+        *by monthnumber: gen maxmonth= _n==1
+        *gen max_month1= kg if maxmonth==1
+        *by monthnumber: egen max_month= 
+      by monthnumber: egen Maxmonth= max(kg)
+      order Maxmonth, before(kg)
+      replace Maxmonth= . if allert==0
+  *MINMONTH 
+    gsort monthnumber kg
+      by monthnumber: egen Minmonth= min(kg)
+      order Minmonth, before(kg)
+      replace Minmonth= . if allert==0
+  *VARIABILE TIME SETTATA: ttset per minweek
+    *gen Dateweekly=Date if minweek==1
+    *format %tddd/nn/yy Dateweekly 
+    *tsset Dateweekly
+    
+    
+sort Date
+order date Date year season month monthnumber week1 week8 week weeknumber dow day daynumber time hour min timenum weeknumber kg kg_mean kg_8week kg_S Minmonth Maxmonth minmonth minmonth_morning minweek minweek_morning minweek_JUSTmorning minday minday_morning minday_JUSTmorning 
+*delete all useless variables 
+  drop kg2 daydummy weekdummy monthdummy kgprog fatkgprog musclekgprog fat1prog muscle1prog 
+*DROP DATE
+  drop date
+
+**# format-round and break
+format %9.4g kg kg_mean kg_S
+
+*variables export for TABLEAU *********************************************
+  gen Minday_kg= kg if minday_morning==1
+  gen Minweek_kg= kg if minweek_morning==1
+  order Minday_kg Minweek_kg, before(minmonth)
+  *last obs:
+    sort Date
+    gen Kg_last= kg if [_n]==[_N]
+  *this year
+    *KG_min
+      gen Minday_kg_thisyear= Minday_kg if week1 >= week1[_N]-52
+    *means
+      gen kg_thisyear_means= kg_mean if week1 >= week1[_N]-52
+    *max and min
+      gen MAXmonth_thisyear= Maxmonth if week1 >= week1[_N]-52
+      gen MINmonth_thisyear= Minmonth if week1 >= week1[_N]-52
+  *past year
+    *KG_min
+      gen Minday_kg_pastyear= Minday_kg if week1 < week1[_N]-52 ///
+        & week1 >= week1[_N]-104
+    *means
+      gen kg_pastyear_means= kg_mean if week1 < week1[_N]-52 ///
+        & week1 >= week1[_N]-104
+    *max and min
+      gen MAXmonth_pastyear= Maxmonth if week1 < week1[_N]-52 ///
+        & week1 >= week1[_N]-104
+      gen MINmonth_pastyear= Minmonth if week1 < week1[_N]-52 ///
+        & week1 >= week1[_N]-104
+*create range of bulking/cut
+  *first level: positive and negative picks
+  sort allert Date
+  gen minimum_range= 1 if kg_mean<kg_mean[_n-1] & kg_mean < kg_mean[_n+1]
+  gen maximum_range= 1 if kg_mean>kg_mean[_n-1] & kg_mean > kg_mean[_n+1]
+  replace minimum_range= 0 if kg_mean[_n-1]<kg_mean[_n-2] & _n==_N
+  replace maximum_range= 0 if kg_mean[_n-1]>kg_mean[_n-2] & _n==_N
+  replace minimum_range= 0 if minimum_range==. & allert==1
+  replace maximum_range= 0 if maximum_range==. & allert==1
+  gen range1= minimum_range + maximum_range
+  gen range2= sum(range1) if allert==1 
+  
+  *second level: start chosing just HIGH pick (+/-) (need up/under 3)
+  gen min2 = 1 if kg_mean<kg_mean[_n-1] & kg_mean < kg_mean[_n+1] & ///
+    kg_mean[_n]<kg_mean[_n-2] & kg_mean[_n]<kg_mean[_n+2] & ///
+    kg_mean[_n]<kg_mean[_n-3] & kg_mean[_n]<kg_mean[_n+3]
+  gen max2 = 1 if kg_mean>kg_mean[_n-1] & kg_mean > kg_mean[_n+1] & ///
+    kg_mean[_n]>kg_mean[_n-2] & kg_mean[_n]>kg_mean[_n+2] & ///
+    kg_mean[_n]>kg_mean[_n-3] & kg_mean[_n]>kg_mean[_n+3]
+  replace min2= 0 if min2==. & allert==1 
+  replace max2= 0 if max2==. & allert==1 
+  *add and check
+  gen range1_1= range1 + min2 + max2
+  sort allert Date
+  replace range1_1=0 if range1_1==1
+  replace range1_1=1 if range1_1==2
+  
+  *generate the first bulk-cut 
+    *problem: there are some picks (+/-) not cleared
+      *somethimes there are 2 near bulk/cut
+  gen range2_2= sum(range1_1) if allert==1 
+  sort range2_2 Date
+  by range2_2: replace range2_2= range2_2-1 if _n==1
+  sort range2_2 Date
+  by range2_2: gen diffmax= kg_mean[_N]-kg_mean[1]
+  by range2_2: egen diff = max(diffmax)
+  
+  *unify those 2 near bulk/cut generating a mean when two near period are both positive or both negative (IMPORTANT): range3_3
+  sort allert Date 
+  gen range3= 1 if diff>=0 & diff[_n-1]<0 | diff<0 & diff[_n-1]>=0  
+  sort allert Date
+  gen range3_3= sum(range3) if allert==1
+  sort range3_3 Date
+  *GEN DIFF2
+  sort range3_3 Date
+  by range3_3: gen diffmax2= kg_mean[_N]-kg_mean[1]
+  by range3_3: egen diff_pre = max(diffmax2)
+  
+  *add additional to arrange the 1 months in previus period (pefore range3)
+  gen range3_31 = range3_3
+  sort range3_3 Date
+  by range3_3: replace range3_31= range3_31+1 if _n==_N
+  sort range3_31 Date
+  by range3_31: replace range3_31= . if _n!=1 & _n!=2 
+  sort range3_31 Date
+  by range3_31: gen additional= kg_mean[_N]-kg_mean[1] if _n==2
+  sort range3_3 Date
+  replace additional= 0 in 1
+  replace additional=. in 2
+  by range3_3: gen diff2 = diff_pre+additional[1]
+    
+  /*
+  *Wrong: 
+    *GENERATE DIFF2_2
+    gen range3_3_3= 1 if range3_3 > range3_3[_n-1]
+    replace range3_3_3=1 in 1
+    gen diff2_2= diff2_pre if range3_3_3==1
+    by range3_3: egen diff2= mean(diff2_2) if allert==1
+  */
+
+  *correggere per ultimo mese
+    egen maxrange3_3=max(range3_3)
+    gen rangeLAST= 1 if maxrange3_3==range3_3
+    replace rangeLAST=0 if rangeLAST!=1 & allert==1
+    sort range3_3 Date
+  *generare mesi per periodo
+    by range3_3: gen months_range3_3= monthnumber[_N]-monthnumber[1]+1 ///
+        if allert==1
+  *generating diff3 (media per periodo)
+    sort range3_3 Date
+    by range3_3: gen diff3=diff2/months_range3_3 
+  
+  *creare variabili per identificare MAX CUT and BULK 
+  sort Date
+  egen maxcutSt= min(diff2)
+  gen maxcutS= diff2 if diff2==maxcutSt
+  sort maxcutS Date
+    by maxcutS: gen maxcutSmonths= months_range3_3 if maxcutS!=.
+  gen maxcutSmean=diff3 if maxcutS!=.
+    
+  egen maxbulkSt= max(diff2)
+  gen maxbulkS= diff2 if diff2==maxbulkSt
+  sort maxbulkS Date
+    by maxbulkS: gen maxbulkSmonths= months_range3_3 if maxbulkS!=.
+  gen maxbulkSmean=diff3 if maxbulkS!=.
+
+  
+  *CONTROL FOR PAST YEAR OR PAST 2 YEAR
+    sort Date 
+    gen thisyear= 1 if week1 >= week1[_N]-52
+    
+    gen pastyear= 1 if week1 < week1[_N]-52 ///
+        & week1 >= week1[_N]-104
+    gen years2= 1 if week1 >= week1[_N]-104
+  *change range1_1 to make it work for labels
+    gen rangelabels= range1_1
+    sort allert range3_3 Date
+    by allert range3_3: replace rangelabels= 1 if _n==1 | _n==_N
+    
+    sort allert thisyear Date
+    by allert thisyear: replace rangelabels=1 if allert==1 & (_n==_N |_n==1)
+    sort allert pastyear Date
+    by allert pastyear: replace rangelabels=1 if allert==1 & (_n==_N |_n==1)
+  *month of bulk/cut (graphic point)
+    sort range3_3 Date
+    by range3_3: gen Monthrange= _N if range3_3 != .
+    by range3_3: replace Monthrange= . if _n!=1
+    by range3_3: gen centerrange= 1 if _n==round(_N/2)
+    sort Date 
+  /*commands to check 
+    order Date kg_mean rangelabels thisyear pastyear allert, before(range1)
+    *order range1 range2 minimum_range maximum_range, after(kg_mean)  
+    gsort -allert Date
+    *twoway (line kg_mean Date) (line kg_mean Date if range3==1)
+    sort Date
+    twoway (line diff3 Date, yaxis(1)) (line kg_mean Date, yaxis(2)), yline(0)
+  */
+
+sort Date
+
+export excel using "Excel Renpho.xlsx", sheetreplace firstrow(variables)
+
+
+
+_Break_
+
+*REPLACE MISSING WITH 0 - NO!
+foreach var of varlist _all {
+  replace `var'=0 if `var'==.
+}
+*********************************************************************************
+************************************END******************************************
+*********************************************************************************
+
+**********************************BROWSE*****************************************
+
+/* STATA ANALYSIS
+
+*DAY
+  browse if minday==1
+    browse if minday_morning==1
+      browse if minday_JUSTmorning==1
+*WEEK
+  browse if minweek_morning==1
+    browse if minweek_JUSTmorning==1
+*MONTH
+  browse if minmonth==1
+    browse if minmonth_morning==1
+      *si assume che non ci sono mesi senza misurazioni di mattina
+  *last months
+    browse if monthnumber > monthnumber[_N]-12
+*KG KG_mean KG_S
+  browse if kg!=.
+  browse if kg_mean!=.
+  browse if kg_S!=.
+  browse if kg_8week!=.
+*FROM DATE***********************************************************************
+  *check date number and back
+
+    format Date %tddd/nn/yy
+      format Date %9.0g
+  *just "verified" mesures (DROP 9 OBS)
+    drop if Date <= 21467
+        
+  *just RENPHO
+    drop if Date < 22356
+*just last 6 months 
+    drop if monthnumber <= monthnumber[_N]-6
+  *just last 2 months 
+    drop if monthnumber <= monthnumber[_N]-2
+  *just last year
+    drop if monthnumber <= monthnumber[_N]-12
+  *just last 1.5 year
+    drop if monthnumber <= monthnumber[_N]-18
+  
+  *DROP EXPANDED
+    drop if allert==1
+    keep if kg_S !=.
+
+                *GRAPHS*
+  *MORE READABLE
+    grstyle init
+    grstyle graphsize x 7
+    grstyle graphsize y 4
+  *BACK TO NORMAL
+    grstyle clear, erase
+        *care: JUSTmorning cant be used before 17/3/21
+****************************QUARTER-SEASON**************************************
+  **#Mediaquarter based on media_month based on min_week morning
+    *browse if kg_S>74.4 & kg_S< 74.5
+    *browse kg_S Date if kg_S!=.
+    
+    /* old system:
+    gen control= 1 if monthnumber > monthnumber[_N]-18
+    sort control Date
+    by control: replace control = . if _n != 1
+    if control==1 local a = Date
+    display `a'    */
+    
+    *LINE BASED ON DATE (PER 8WEEKS)
+    replace kg_S=74.3 if Date == 22006
+    twoway (scatter kg_S Date, mlabel(kg_S) mlabformat(%9.3g) mlabsize(6-pt) mlabposition(12)          msize(4-pt)) (mspline kg_S Date, bands(33)),xlabel(,format(%tdCY)           angle(standard)) xline(21467, lcolor(gray)) ylabel(#6,angle(standard))         yscale(range (66 68)) xlabel(#8)
+    
+    *** LINE DIRECTLY AT MONTHS: (DIRECTLY PER MONTHS)
+        *trovare un modo per farlo funzionare
+      sort Date
+      local a = cond(monthnumber==monthnumber[_N]-18 & allert==1, Date,1)
+      display `a' 
+    
+    replace kg_S=74.3 if Date == 22006
+    sort Date
+    preserve
+    drop if monthnumber!=monthnumber[_N]-18
+    if allert==1 local a = Date
+    restore 
+    display `a'
+    twoway (scatter kg_S Date, mlabel(kg_S) mlabformat(%9.3g) mlabsize(6-pt) mlabposition(12)          msize(4-pt)) (mspline kg_S Date, bands(33)),xlabel(,format(%tdCY)           angle(standard)) xline(`a', lcolor(gray)) ylabel(#6,angle(standard))         yscale(range (66 68)) xlabel(#8)
+**#*******************************8 WEEKS******************************************
+    
+    sort Date
+    preserve
+    drop if monthnumber!=monthnumber[_N]-18
+    if allert==1 local a = Date
+    restore 
+    display `a'
+    twoway (scatter kg_8week Date, mlabel(kg_8week) mlabformat(%9.3g) mlabsize(6-pt) mlabposition(12)  msize(4-pt)) (mspline kg_8week Date, bands(100)) if year>=2018 & monthnumber>=8, xlabel(,format(%tdCY) angle(standard)) xline(`a', lcolor(gray)) ylabel(#6,angle(standard)) 
+*********************************MONTH******************************************
+  *MINMONTH MORNING SCATTER
+    *twoway (scatter kg Date, mlabel(kg) mlabformat(%9.3g) mlabsize(vsmall)/// mlabposition(1))(line kg Date) if minmonth_morning==1
+    
+    **MEDIA_month based on MIN_WEEK mornin
+      twoway (scatter kg_mean Date, mlabel(kg_mean) mlabformat(%9.1g) mlabsize(3-pt) mlabposition(10)  msize(2-pt)) (line kg_mean Date), xlabel(,format(%tdCY) angle(standard)) xline(21467, lcolor(gray))
+    **NO FIRST 9 OBS
+      twoway (scatter kg_mean Date, mlabel(kg_mean) mlabformat(%9.3g) mlabsize(4-pt) mlabposition(10)  msize(2-pt)) (mspline kg_mean Date, bands(100)) if year>=2018 & monthnumber>=8, xlabel(,format(%tdCY) angle(standard)) xline(22462, lcolor(gray)) ylabel(,angle(standard))
+      
+    **#LAST 18 MONTHS
+      sort Date
+      preserve
+      drop if monthnumber!=monthnumber[_N]-6
+      if allert==1 local a = Date
+      restore 
+      display `a'
+      twoway (scatter kg_mean Date, mlabel(kg_mean) mlabformat(%9.3g) mlabsize(vsmall) mlabposition(11)) (mspline kg_mean Date) if  monthnumber > monthnumber[_N]-18, xlabel(#12,format(%tdmon-YY) angle(stdarrow)) xline(`a', lcolor(gray)) ylabel(,angle(standard))
+  
+  *GRAPHS
+    *if minmonth==1
+      twoway (area kg Date) (line fat1 Date, yaxis(2)) if minmonth==1 
+      twoway (area kg Date) (line fat1 Date, yaxis(2)) if minmonth==1 
+    *MINMONTH MORNING
+      twoway (area kg Date) (line fat1 Date, yaxis(2)) if minmonth_morning==1
+      twoway (area kg Date) (line fat1 Date, yaxis(2)) if minmonth==1 
+************************************WEEK*****************************************
+  *SCATTER LABEL
+    **#LAST 6 MONTHS
+    twoway (scatter kg Date, mlabel(kg) mlabposition(12) mlabformat(%9.3g) mlabsize(vsmall)       msize(4-pt)) (mspline kg Date, bands(100)) if minweek_JUSTmorning==1 &           monthnumber > monthnumber[_N]-6, xlabel(#12,format(%tddd-mon-YY)angle(stdarrow))ylabel(,angle(standard))
+      
+  *GRAPHS:
+    *min obs for week, morning
+    twoway (area kg Date) (line fat1 Date, yaxis(2)) if minweek_morning==1
+      /*it's clear the comparison makes no sense because the y-axes range is random
+        if you put the range of the fat1 axis from 14 to 15 it becomes clear*/
+    twoway (area kg Date) (line fatkg Date, yaxis(2)) if minweek_morning==1
+      *IDEM, 
+    twoway (area kg Date) (line musclekg Date, yaxis(2)) if minweek_morning==1
+    
+    *ONLY min obs for week
+      twoway (area kg Date) (line fat1 Date, yaxis(2)) if minweek_JUSTmorning==1
+
+***********************************DAY******************************************
+  **# SCATTER ALL_JUST MORNING 
+      *ALL MESURES ASJUSTED, LAST MONTHS
+    twoway (scatter kg Date, mlabel(kg) mlabsize(vsmall) mlabposition(5)) (line kg Date)         if minday_JUSTmorning==1 & monthnumber > monthnumber[_N]-5
+   first morning
+    twoway (scatter kg Date, mlabel(kg) mlabsize(vsmall) mlabposition(5)) (line kg Date)         if minday_morning==1 & monthnumber > monthnumber[_N]-5
+  
+  
+  *BASE - LINE 
+    twoway (line kg Date)
+  *LAST 6 MONTHs OBS
+    twoway (line kg Date) if weeknumber>60
+  *GRAPHS: 
+    *kg+fat
+      twoway (area kg Date) (line fatkg Date, yaxis(2)) 
+    *per day, pref min_morning            
+    twoway (area kg Date) (line fat1 Date, yaxis(2)) if minday_morning==1
+    *PER DAY, ONLY MORNING
+    twoway (area kg Date) (line fat1 Date, yaxis(2)) if minday_JUSTmorning==1
+
+
+********RAPPRESENTAZIONI PIÙ ELABORATE PER WEEK E MORNING
+  ** SET a 100 genuary/2021
+    *QUESTO è RAPPRESENTATIVO DI FAT in KG
+      twoway (area kg100 Date) (line fatkg100 Date) if minweek_morning==1
+    *idem but FAT in %
+      twoway (area kg100 Date) (line fat1100 Date) if minweek_morning==1
+    *muscle in kg 
+      twoway (area kg100 Date) (line musclekg100 Date) if minweek_morning==1
+      
+**# *COMBINATI  FAT + MUSCOLI 
+    *just RENPHO
+    drop if Date < 22356
+  *gennaio settato a 100%: QUESTO è RAPPRESENTATIV DI FAT + MUSCLE
+    twoway (area kg100 Date) (line fatkg100 musclekg100 Date) if minweek_morning==1
+  *Set 0 at jenuary: QUESTO è rappresentativ di fat+muscle SU LIVELLO 0 (+-)
+    twoway (area kg0 Date) (line fatkg0 musclekg0 Date) if minweek_morning==1
+  *set 0 at jenuary but muscle and fat in %                 
+    *FAT+ MUSCLE IN PERCENTUALE SU LIVELLO 0, NOT BAD AT ALL
+      twoway (area kg0 Date) (line fat10 muscle10 Date) if minweek_morning==1
+  *andamento di grasso e muscoli in base al peso
+    twoway (area kg0 Date, color(ltblue)) (line fat_muscle_0kg Date) if minweek_morning==1
+    
+**********  FUN   ***********
+  *aree a cazzo
+  twoway (area kg musclekg Date) (line fat1 Date, yaxis(2))                   if minday_JUSTmorning==1 & weeknumber>50
+  *SUPERGRAPH
+  *all
+  twoway (scatter kg Date, msize(2-pt)) (fpfitci kg Date, fcolor(red%20) alcolor(%0)) (mspline kg Date, bands(30) n(30))
+  *month morning
+  twoway (scatter kg Date, mlabel(kg)) (fpfitci kg Date, fcolor(red%20) alcolor(%0)) (mspline kg Date, bands(30) n(30)) if minmonth_morning==1
+  *week morning
+  twoway (scatter kg Date, msize(2-pt)) (fpfitci kg Date, fcolor(red%20) alcolor(%0)) (mspline kg Date, bands(30) n(30)) if minweek_JUSTmorning==1
+  
+
+  mfp : regress kg daynumber
+  fp <daynumber> : regress kg <daynumber>
+  *gen kgdafat= (fat1^-2) -.004714987
+
+*******CONTROL LAST OBSERVATIONS**********
+  *keep in 438/479 
+  twoway (line kg Date) (scatter kg Date, mlabel(kg) mlabformat(%9.3g) mlabsize(vsmall) mlabposition(1)) if minweek_JUSTmorning==1
+*TEST
+  drop if Date < 22356
+  format Date %tddd/nn/yy
+      format Date %9.0g
+  
+  *gen beforeprimoluglio2021 = Date>22462
+  
+  *gen verify = 1 if kg beforeprimoluglio2021
+  
+  drop if kg==.
+    gsort -kg Date
+  browse Date kg fat1
+  
+  
+*TESTS
+  gen test1= musclekg100-kg100 
+    line test1 Date if minweek_morning==1, yline(0) 
+      line test1 Date if kg>77 & kg<77.3 & minweek_morning==1, yline(0) 
+  reg test1 Date if minweek_morning==1
+      reg test1 Date if kg > 76 & minweek_morning==1
+    avplot Date
+
+  gen test2= fatkg100-kg100
+    line test2 Date if minweek_morning==1, yline(0)
+  reg test2 Date if minweek_morning==1
+      reg test2 Date if kg >76 & minweek_morning==1
+    avplot Date 
+
+  reg musclekg Date if minweek_morning==1
+      reg musclekg Date if minweek_morning==1 & kg>76
+    avplot Date 
+
+  gen test3= musclekg-kg 
+    line test3 Date if minweek_morning==1
+  reg test3 Date if minweek_morning==1
+    avplot Date
+
+  gen test4= musclekg/kg
+    line test4 Date if minweek_morning==1
+  reg test4 Date if minweek_morning==1
+  reg test4 Date if minweek_morning==1 & kg>77 & kg <77.2
+    avplot Date
+
+  spearman test4 Date 
+    
+    
+*tentativo panel data 
+  *MOMENTANEA
+    drop if monthnumber==22
+  *max mese 
+    sort monthnumber kg, 
+      by monthnumber: gen maxmonth=1 if _n==_N
+  *delete . values 
+    foreach var of varlist _all {
+      replace `var'=0 if `var'==.
+    }
+  *create X 
+    keep if minmonth_morning==1 | maxmonth==1
+    order maxmonth monthnumber 
+    xtset maxmonth monthnumber 
+  *test random effect
+    xtreg kg fat1, fe
+    estimate store fixed
+    xtreg kg fat1, re
+    estimate store random
+    hausman fixed random 
+      *fixed
+  *test homoskedasticity
+    xtreg kg fat1, fe
+    xttest3
+      *non rifiutiamo homoskedasticity
+  *paneldata 
+    xtreg kg fat1, fe
+  reg fat1 kg
+  vif
+    /*  
+*SET TIME VARIABLE
+  order musclekg, before(fatkg)
+    *useless
+  twoway (tsline kg) (tsline musclekg fatkg, yaxis(2))
+  twoway (tsline kg) (tsline fatkg, yaxis(2))
+  twoway (tsline kg) (tsline musclekg, yaxis(2))
+  
+  twoway (tsline kg) (tsline fat1, yaxis(2))
+  twoway (tsline kg) (tsline muscle1, yaxis(2))
+  
+*twoway line y1var xvar || line y2var xvar, pstyle(p1)
+
+*musclekg in %
+  twoway (area kg Date) (line fat1 Date, yaxis(2)) if minweek==1
+  twoway (area kg Date) (line muscle1 Date, yaxis(2)) if minweek==1
+  *newmetod with - added
+    gen muscle1new=muscle1-68
+    twoway (area kg Date) (line muscle1new Date, yaxis(2)) if minweek==1
+      *useless
+    spearman kg muscle1
+    spearman kg fat1
+    reg kg muscle1, robust
+      predict kg_predict
+      twoway (scatter kg muscle1) (lfit kg muscle1)
+
+  */
+
+  
+    *LOOP GENRANDO TUTTE VARIABILI CHE POI AVREI DOVUTO SOMMARE, PER ADESSO POTREBBE NON SERVIRE
+
+  *different WORKA MA HO UNA MEDIA TRA LE SETTIMANE CHE ESISTONO 
+      gen week1= week(Date)
+        sort year week1
+        by year week1: gen weekdummy2= _n==1
+        gen weeknumber1 = sum(weekdummy2)
+      gen week8= weeknumber1/8 
+      replace week8=0 if mod(week8,1)>0
+      bysort weeknumber1: replace week8=0 if _n!=1 
+      replace week8=1 if week8!=0
+      replace week8= sum(week8)
+      gen kg_week8 = kg if minweek_morning
+      bysort week8: egen kg_8week= mean(kg_week8) 
+      bysort week8: replace kg_8week =. if _n != 1
+      drop kg_week8 weeknumber1 week1 weekdummy2
+/*    
+    bysort year week1: replace week1=0 if _n!=1
+        bysort year: replace week1= 52+week1 if _n==1
+        replace week1= week1-52 if _n==1
+        replace week1= sum(week1)
+        
+        6026
+  */
+    *Regress
+      twoway (scatter kg fat1) (line kg fat1)
+      regress fat1 kg
+      twoway (function y=0.2518287*(x)-4.7618, range(70 86)) (scatter fat1 kg )
+      
+      sort kg 
+        gen disco= kg> 78
+        browse kg fat1 
+        gen fat_a =  fat1+((kg-78)*0.3) if disco==1
+            replace fat_a= fat1 if disco!=1
+          twoway (scatter kg fat_a) (line kg fat_a)
+                
+        gen fat_b = fat1+0.2 if disco==1
+            replace fat_b= fat1 if disco!=1
+          twoway (scatter kg fat_b) (line kg fat_b)
+          
+        gen fat_c = fat1+0.3+((kg-78)*0.3)
+            replace fat_c= fat1 if disco!=1
+          twoway (scatter kg fat_c) (line kg fat_c)
+      
+      
+      rdrobust fat_b kg, c(78) bwselect(mserd)
+      rdrobust fat_b kg, c(78) bwselect(msetwo)
+      rd fat_b kg, z0(78)
+      drop if kg==.
+      
+      *non risolto
+      
+      twoway (function y=0.821*(x)-.00835+1.495  , range(70 78)) ///
+        (function y=0.144*(x)-.00835+ 0.455 , range(78 86)) ///
+        (scatter fat_b kg )
+    
+    *non risolto
+      scalar x = 1
+      scalar y = 1
+      generate lnL = -(x + y - 3)^2/2 - (2*x + y - 5)^2/2
+      nl lnL
+      
+      
+/* grstyle init
+    grstyle set ci
+    p#label(kg_8week)
+    two (scatter kg_8week Date) ///
+    (mspline kg_8week Date)
+    
+    mlabsize(kg_8week) mlabsize(6-pt) ///
+    plabel(kg_8week, size(*0.5)) */
+*/
+
+/*
+    rename week1 tg0 
+    
+      local r=1
+      while `r' <=500 {
+        local f= `r' -1
+        sort tg`f'
+        gen x`r'= tg`f'[1]+8
+        gen tg`r'= tg`f' if tg`f'>x`r'
+        local r= `r'+1
+      }
+        sort Date
+        drop x*
+        gen x=0
+        local s=1
+        while `s' <=500 {
+          replace x= x+1 if tg`s'==.
+          local s= `s'+1
+        }
+          drop tg*
+          replace x= x-500
+          replace x= -x
+          sort x
+          by x: replace x= 1 if _n==1
+          replace x=0 if x!=1
+          sort Date
+          gen week9 = sum(x)
+          drop x
+      *creating mean per 8weeks
+        gen kg_week9 = kg if minweek_morning
+        bysort week9: egen kg_9week= mean(kg_week8) 
+        bysort week9: replace kg_9week =. if _n != 1
+        drop kg_week9 
+        sort Date
+*/
+
+/*
+gen week2 = ceil(week1/8)
+order week2, before(week8)
+
+gen week3 = floor(week1/8)
+order week3, before(week8)
+
+
+gen week4 = 8*ceil(week1/8)
+order week4, before(week8)
+
+gen week5 = 8*floor(week1/8)
+order week5, before(week8)
+
+drop week4 week5
+*/
+/*
+**# Bookmark #1  *********************************************
+    *set scheme sj
+    grstyle init
+    grstyle set plain, horizontal grid
+    grstyle graphsize x 7
+    grstyle graphsize y 4
+    
+  *BACK TO NORMAL
+    grstyle clear, erase
+      
+  *WEEK
+    twoway (scatter kg Date, mlabel(kg) mlabposition(12) mlabformat(%9.3g) mlabsize(vsmall)       msize(4-pt)) (mspline kg Date, bands(100)) if maxweek==1 &           monthnumber > monthnumber[_N]-6, xlabel(#12,format(%tddd-mon-YY)angle(stdarrow))ylabel(,angle(standard))
+    
+    twoway (scatter kg Date if maxweek==1, mlabel(kg) mlabposition(12) mlabformat(%9.3g) mlabsize(vsmall) msize(4-pt)) (mspline kg Date if maxweek==1, bands(100)) (scatter kg Date if minweek_JUSTmorning==1, mlabel(kg) mlabposition(12) mlabformat(%9.3g) mlabsize(vsmall) msize(4-pt)) (mspline kg Date if minweek_JUSTmorning==1, bands(100)) if  monthnumber > monthnumber[_N]-6, xlabel(#12,format(%tddd-mon-YY)angle(stdarrow))ylabel(,angle(standard))
+    
+  
+*Month: MASSIMO e media_minimo_settimanale_mattina
+  sort Date
+  preserve
+  drop if monthnumber!=monthnumber[_N]-6
+  if allert==1 local a = Date
+  restore
+  twoway (scatter Maxmonth Date, mlabel(Maxmonth) mlabformat(%9.3g) mlabsize(vsmall) mlabposition(11)) (mspline Maxmonth Date, bands(30)) ///
+  (scatter kg_mean Date, mlabel(kg_mean) mlabformat(%9.3g) mlabsize(vsmall) mlabposition(11)) (mspline kg_mean Date) ///
+  if  monthnumber > monthnumber[_N]-18, xlabel(#12,format(%tdmon-YY) angle(stdarrow)) xline(`a', lcolor(gray)) ylabel(,angle(standard))
+
+*Month: MASSIMO E MINIMO PURI
+  sort Date
+  preserve
+  drop if monthnumber!=monthnumber[_N]-6
+  if allert==1 local a = Date
+  restore
+  display `a'
+  twoway (scatter Maxmonth Date, mlabel(Maxmonth) mlabformat(%9.3g) mlabsize(vsmall) mlabposition(11)) (mspline Maxmonth Date, bands(30))  (scatter Minmonth Date, mlabel(Minmonth) mlabformat(%9.3g) mlabsize(vsmall) mlabposition(11)) (mspline Minmonth Date) if  monthnumber >= monthnumber[_N]-18, xlabel(#12,format(%tdmon-YY) angle(stdarrow)) xline(`a', lcolor(gray)) ylabel(,angle(standard))
+  
+*modifiche simil Tableau
+  
+  drop if Date < 21468
+  
+  
+  twoway (scatter Maxmonth Date, mlabel(Maxmonth) mlabformat(%9.3g) mlabsize(relative1p5) mlabposition(12) msize(vsmall) mcolor(dknavy)) (line Maxmonth Date, lcolor(dknavy)) (fpfit Maxmonth Date, lcolor(dknavy) estopts(degree(3)) lwidth(vthin) lpattern(shortdash)) (scatter Minmonth Date, mlabel(Minmonth) mlabformat(%9.3g) mlabcolor(maroon) mlabsize(relative1p5) mlabposition(5) msize(vsmall) mcolor(sienna)) (line Minmonth Date, lcolor(sienna) lpattern(solid)) (fpfit Minmonth Date, estopts(degree(3)) lwidth(vthin) lpattern(shortdash) lcolor(sienna)), xlabel(#12,format(%tdmon-YY) angle(stdarrow)) ylabel(,angle(standard)) legend (off)
