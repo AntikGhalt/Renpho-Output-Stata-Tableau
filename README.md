@@ -1,5 +1,5 @@
 # Renpho-Output-Stata-Tableau
-This is one of my first projects made in 2022
+This is one of my first projects, completed in 2022.
 
 The first part prepares the code for merging different data sources
 
